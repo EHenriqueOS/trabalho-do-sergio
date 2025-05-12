@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leitor de Planilhas do Emmanuel</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #eef1f5; color: #333; line-height: 1.6; }
+        .container { max-width: 1200px; margin: auto; background-color: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .title-header { background-color: #006400; color: white; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .title-header h1 { margin: 0; font-size: 1.8em; font-weight: 600; }
+        .controls, .filters { margin-bottom: 25px; padding: 20px; background-color: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; }
+        .controls label, .filters label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
+        .controls input[type="file"] { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; background-color: #fff; cursor: pointer; }
+        .filter-group { display: flex; gap: 20px; }
+        .filter-item { flex: 1; }
+        .filters input[type="text"] { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        .table-container { overflow-x: auto; background-color: #fff; border-radius: 8px; border: 1px solid #e0e0e0; margin-top: 20px; }
+        #data-table { width: 100%; border-collapse: collapse; font-size: 0.95em; }
+        #data-table th, #data-table td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; white-space: nowrap; }
+        #data-table th { background-color: #006400; color: white; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+        #data-table tbody tr:nth-child(even) { background-color: #f9f9f9; }
+        #data-table tbody tr:hover { background-color: #e6f2ff; }
+        .status-message { margin-top: 15px; padding: 10px; background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 6px; text-align: center; color: #555; }
+        @media (max-width: 768px) {
+            .filter-group { flex-direction: column; }
+            .filters input[type="text"] { margin-bottom: 10px; }
+            .title-header h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="title-header"><h1>Leitor de Planilhas do Emmanuel</h1></header>
+        <section class="controls">
+            <label for="file-input">Selecione o arquivo .xlsx ou .xls:</label>
+            <input type="file" id="file-input" accept=".xlsx,.xls">
+        </section>
+        <section class="filters">
+            <div class="filter-group">
+                <div class="filter-item">
+                    <label for="filter-nome">Filtrar por Nome:</label>
+                    <input type="text" id="filter-nome" placeholder="Digite o nome para buscar...">
+                </div>
+            </div>
+        </section>
+        <div class="table-container">
+            <table id="data-table"><thead></thead><tbody></tbody></table>
+        </div>
+        <div id="status-message" class="status-message" style="display: none;"></div>
+    </div>
+
+    <script>
+        let originalData = [];
+        const fileInput = document.getElementById('file-input');
+        const filterNomeInput = document.getElementById('filter-nome');
+        const dataTable = document.getElementById('data-table');
+        const tableHead = dataTable.tHead; // More direct
+        const tableBody = dataTable.tBodies[0]; // More direct
+        const statusMessage = document.getElementById('status-message');
+        const NOME_COLUMN_CANDIDATES = ['nome', 'name', 'participante', 'aluno'];
+        let actualNomeColumn = '';
+
+        const showStatus = message => {
+            statusMessage.textContent = message;
+            statusMessage.style.display = 'block';
+        };
+        const clearTable = () => {
+            tableHead.innerHTML = '';
+            tableBody.innerHTML = '';
+        };
+
+        const identifyFilterColumns = sampleRow => {
+            const keys = Object.keys(sampleRow);
+            actualNomeColumn = '';
+            if (keys.length > 0) {
+                const lowerKeys = keys.map(k => k.toLowerCase());
+                const candidate = NOME_COLUMN_CANDIDATES.find(c => lowerKeys.includes(c));
+                actualNomeColumn = candidate ? keys.find(k => k.toLowerCase() === candidate) : keys[0];
+            }
+            if (!actualNomeColumn && keys.length > 0) console.warn("Coluna 'Nome' não determinada, usando a primeira.");
+            else if (keys.length === 0) console.warn("Linha de amostra vazia, colunas não identificadas.");
+            filterNomeInput.placeholder = actualNomeColumn ? `Buscar em "${actualNomeColumn}"...` : "Buscar em todas as colunas...";
+        };
+
+        const renderTable = data => {
+            clearTable();
+            if (!data || data.length === 0) return;
+
+            const headers = Object.keys(data[0]);
+            const headerRow = tableHead.insertRow();
+            headers.forEach(headerText => {
+                const th = document.createElement('th');
+                th.textContent = headerText;
+                headerRow.appendChild(th);
+            });
+
+            data.forEach(row => {
+                const tr = tableBody.insertRow();
+                headers.forEach(header => {
+                    const td = tr.insertCell();
+                    const cellValue = row[header];
+                    td.textContent = (cellValue instanceof Date) ? cellValue.toLocaleDateString('pt-BR') : (cellValue ?? '');
+                });
+            });
+        };
+
+        const applyFilters = () => {
+            const filterNomeValue = filterNomeInput.value.toLowerCase().trim();
+            if (originalData.length === 0) {
+                renderTable([]);
+                showStatus(filterNomeValue ? "Carregue uma planilha primeiro." : "Nenhum arquivo carregado.");
+                return;
+            }
+
+            let dataToRender = originalData;
+            let statusText = `${originalData.length} registro(s) carregado(s).`;
+
+            if (filterNomeValue) {
+                dataToRender = originalData.filter(row =>
+                    (actualNomeColumn && row[actualNomeColumn] !== undefined && String(row[actualNomeColumn] ?? '').toLowerCase().includes(filterNomeValue)) ||
+                    (!actualNomeColumn && Object.values(row).some(val => String(val ?? '').toLowerCase().includes(filterNomeValue)))
+                );
+                statusText = dataToRender.length === 0 ? "Nenhum registro com os filtros atuais." : `${dataToRender.length} registro(s) encontrado(s).`;
+            }
+            renderTable(dataToRender);
+            showStatus(statusText);
+        };
+        
+        const handleFile = event => {
+            const file = event.target.files[0];
+            if (!file) { showStatus("Nenhum arquivo selecionado."); return; }
+            showStatus("Lendo arquivo...");
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const workbook = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    originalData = XLSX.utils.sheet_to_json(worksheet, { raw: false, defval: "" });
+                    filterNomeInput.value = '';
+
+                    if (originalData.length > 0) {
+                        identifyFilterColumns(originalData[0]);
+                        renderTable(originalData);
+                        showStatus(`${originalData.length} registro(s) carregado(s).`);
+                    } else {
+                        clearTable();
+                        showStatus("Planilha vazia ou dados não puderam ser lidos.");
+                    }
+                } catch (error) {
+                    console.error("Erro ao processar:", error);
+                    clearTable();
+                    showStatus("Erro ao processar. Verifique o formato (.xlsx, .xls).");
+                    originalData = [];
+                }
+            };
+            reader.onerror = () => {
+                console.error("Erro ao ler arquivo.");
+                clearTable();
+                showStatus("Não foi possível ler o arquivo.");
+                originalData = [];
+            };
+            reader.readAsArrayBuffer(file);
+        };
+
+        fileInput.addEventListener('change', handleFile);
+        filterNomeInput.addEventListener('input', applyFilters);
+        showStatus("Carregue uma planilha (.xlsx/.xls) para começar.");
+    </script>
+</body>
+</html>
